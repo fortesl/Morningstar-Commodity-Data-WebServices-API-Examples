@@ -20,7 +20,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 /**
- * Retrieves relation information from a Morningstar Commodity Server using the WebServices REST API.
+ * Uploads data to a Morningstar Commodity Server using the WebServices REST API.
  * @Dependencies: the jersey-bundle and jsr311-api jar library files must be included in the java build path.
  * @author lfortes
  * @version 2012-04-05
@@ -41,43 +41,44 @@ import java.io.UnsupportedEncodingException;
 import java.util.Iterator;
 
 import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.MultivaluedMap;
 import javax.xml.stream.XMLEventReader;
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamException;
-import javax.xml.stream.events.EndElement;
+import javax.xml.stream.events.Attribute;
 import javax.xml.stream.events.StartElement;
 import javax.xml.stream.events.XMLEvent;
-import javax.xml.stream.events.Attribute;
 
 import com.sun.jersey.api.client.Client;
+import com.sun.jersey.api.client.ClientHandlerException;
 import com.sun.jersey.api.client.ClientResponse;
+import com.sun.jersey.api.client.UniformInterfaceException;
 import com.sun.jersey.api.client.WebResource;
 import com.sun.jersey.api.client.config.ClientConfig;
 import com.sun.jersey.api.client.config.DefaultClientConfig;
 import com.sun.jersey.api.client.filter.HTTPBasicAuthFilter;
-import com.sun.jersey.core.util.MultivaluedMapImpl;
 
-public class GetRelationInfo {
+public class UploadData {
 	
-	//can be set as command line arguments
-    private static String USERNAME = "joe@lim.com";    
+	//can also be specified as command line arguments
+    private static String USERNAME = "joe@lim.com";
     private static String PASSWORD = "ILoveWS1";
     private static String BASE_URL = "http://ausqadev01.lim.com:9090";
-
-    //metadata URI
-    private static final String METADATA_REQ_RSC_PATH = "rs/api/schema/relations";
+    
+    //Data upload URI
+    private static final String DATA_LOAD_RSC_PATH = "rs/upload";
 
     private static final int HTTP_CODE_OK = OK.getStatusCode();
     
     //web client resource
     private WebResource webRsc;
+ 
+    private long jobID;  
     
     /**
      * Constructor
      * Gets web client resource
      */
-    public GetRelationInfo() {
+    public UploadData() {
 		ClientConfig config = new DefaultClientConfig();
 		Client client = Client.create(config);
         // Apply basic authentication.
@@ -88,61 +89,109 @@ public class GetRelationInfo {
     
     /**
      * usage
-     * Required argument: Relation name(s). 
+     * Required argument: xmlFileInput. 
      * Optional argument: output file name (XML response will be sent to file if given).
-     * Optional argument: query parameter attributes.
      * Optional argument: username.
      * Optional argument: password.
      * Optional argument: webserver.
      */
-	private static void usage()
+    private static void usage()
 	{
-    	System.out.println("Usage: " + GetRelationInfo.class.getName() +
-    			" <relations> [-attr <attributes>] [-out <XMLOutputFileName>]" +
+    	System.out.println("Usage: " + UploadData.class.getName() +
+    			" <xmlFileInput> [-out <XMLOutputFileName>] [-parser <parsername>]" +
     			" [-username <username>] [-password <password>] [-webserver <webserver>]");
-    	System.out.println("Example: " + GetRelationInfo.class.getName() +
-    			" NG,CL -attr showChildren=true,desc=true -out /temp/out.xml");
+    	System.out.println("Example: " + UploadData.class.getName() +	" /temp/yy.xml");
         System.exit(1);
-	}
-	
-    /**
-     * Send HTTP get request to server and returns XNL String response
-     * @param relation
-     * @param withChildren
-     * @return
-     */
-    String sendRequestAndGetServerResponse(String relation, String attributes)
+	}    
+    
+	   /**
+  * Send HTTP post request to server and returns XML String response
+  * @param workload
+  * @param parser
+  * @return
+  */
+    String sendRequestAndGetServerResponse(File workload, String parser) throws UnsupportedEncodingException, ClientHandlerException, UniformInterfaceException, XMLStreamException, InterruptedException
     {
-    	ClientResponse resp = null;
-    	MultivaluedMap<String, String> Params = new MultivaluedMapImpl();
+    	String responseString = null;
+    	
+        ClientResponse response = webRsc.path(DATA_LOAD_RSC_PATH + "/").
+    			queryParam("username", USERNAME).queryParam("parsername", parser).
+    			accept(MediaType.TEXT_XML).type(MediaType.TEXT_XML).
+    			post(ClientResponse.class, workload);
+    	
+    	
+        if (HTTP_CODE_OK != response.getStatus()) {
+            // Present the error when something went wrong and bail out.
+            throw new IllegalStateException("Initial request failed with response [" + response + "]");
+        }
+        
+        //Also check the returned XML response intStatus attribute
+        // an intStatus code of less than 300 means job is still processing.
+        responseString = response.getEntity(String.class);
+        while (getDataRequestResponseStatus(responseString) < 300) {
+            // When the status indicates waiting-on-result, retry the request with ID.
+            Thread.sleep(250);
+            response = webRsc.path(DATA_LOAD_RSC_PATH + "/jobreport/" + jobID).get(ClientResponse.class);
+            if (HTTP_CODE_OK != response.getStatus()) {
+                throw new IllegalStateException("Error while polling for results [" + response + "]");
+            }
+            responseString = response.getEntity(String.class);
+        }
+        
+        return responseString;       
+    }    
+    
+	@SuppressWarnings("unchecked")
+    private int getDataRequestResponseStatus(String response) throws XMLStreamException, UnsupportedEncodingException
+    {
+    	int status =0;
+    	boolean jobResult = false;
+    	
+    	//First create a new XMLInptFactory
+    	XMLInputFactory inputFactory = XMLInputFactory.newInstance();
+    	//Setup a new eventReader
+    	InputStream in = new ByteArrayInputStream(response.getBytes("UTF-8"));
+    	XMLEventReader eventReader = inputFactory.createXMLEventReader(in);
+    	
+    	//walk through XML document
+    	while (eventReader.hasNext()) {
+    		XMLEvent event = eventReader.nextEvent();
+    		if (event.isStartElement()) {
+    			StartElement startElement = event.asStartElement();
+    			//If this is a response element, get status
+    			if (startElement.asStartElement().getName().toString().endsWith("response")) {
+					Iterator <Attribute> attributes = startElement.getAttributes();
+    				while (attributes.hasNext()) {
+    					Attribute attribute = attributes.next();
+    					if (attribute.getName().toString().equals("intStatus"))
+    						status = Integer.parseInt(attribute.getValue());
+    					else if (attribute.getName().toString().equals("jobID"))
+    						jobID = Integer.parseInt(attribute.getValue());
+    					System.out.println(attribute.getName() + ": " + attribute.getValue());
 
-    	//setup query parameters
-    	if (attributes != null)
-    	{
-    		String[] params = attributes.split(",");
-    		for (int i = 0; i < params.length; i++)
-    		{
-    			String[] param = params[i].split("=");
-    			Params.add(param[0], param[1]);
+    				}
+    				break;
+    			}
+    			else if (startElement.asStartElement().getName().toString().endsWith("JobResultImpl")) {
+    				jobResult = true;
+    			}
+    			else if (jobResult && startElement.asStartElement().getName().toString().endsWith("code")) {
+    				event = eventReader.nextEvent();
+    				status = Integer.parseInt(event.asCharacters().getData());
+    				if (status >= 300)
+    					break;
+    			}
+
     		}
     	}
+		return status;
+    }
 
-    	resp = webRsc.path(METADATA_REQ_RSC_PATH).path(relation).queryParams(Params).
-    			accept(MediaType.TEXT_XML).get(ClientResponse.class);
-
-        if (HTTP_CODE_OK != resp.getStatus()) {
-            throw new IllegalStateException("Error while polling for results [" + resp + "]");
-        }
-
-        return resp.getEntity(String.class);        
-	}
-
-    /**
-     * Parses Meta Data Relation XML response and display on console
-     * @param response XML formated response
+	/**
+     * Parses XML response to console
+     * @param response XML string response
      */
-	@SuppressWarnings("unchecked")
-    private static void parseMetadataXMLResponseAndDisplayOnConsole(String response) throws UnsupportedEncodingException, XMLStreamException
+    private static void parseLoadDataXMLResponseAndDisplayOnConsole(String response) throws UnsupportedEncodingException, XMLStreamException
     {
     	//First create a new XMLInptFactory
     	XMLInputFactory inputFactory = XMLInputFactory.newInstance();
@@ -155,52 +204,13 @@ public class GetRelationInfo {
     		XMLEvent event = eventReader.nextEvent();
     		if (event.isStartElement()) {
     			StartElement startElement = event.asStartElement();
-    			//If this is a RelInfo element print its attributes
-    			if (startElement.getName().toString().equals("RelInfo")) {
-					Iterator<Attribute> attributes = startElement.getAttributes();
-    				System.out.println("=======================================================");
-    				while (attributes.hasNext()) {
-    					Attribute attribute = attributes.next();
-    					System.out.println(attribute.getName().toString() + ": " + attribute.getValue());
-    				}
-    			}
-    			//If this is a children element call a helper method to parse it.
-    			else if (startElement.getName().toString().equals("children"))
-    				parseRelInfoChildren(eventReader);
-    		}
-    	}
-    }
-
-    /**
-     * helper method. Parses Meta Data Relation children
-     * @param eventReader - XML formatted input resource.
-     */
-	@SuppressWarnings("unchecked")
-    private static void parseRelInfoChildren(XMLEventReader eventReader) throws XMLStreamException
-    {
-    	System.out.println("Children: ");
-    	while (eventReader.hasNext()) {
-    		XMLEvent event = eventReader.nextEvent();
-    		if (event.isStartElement()) {
-    			StartElement startElement = event.asStartElement();
-    			//If this is a RelInfo element print its attributes
-    			if (startElement.getName().getLocalPart().equals("RelInfo")) {
-					Iterator<Attribute> attributes = startElement.getAttributes();
-    				while (attributes.hasNext()) {
-    					Attribute attribute = attributes.next();
-    					System.out.print("\t" + attribute.getName().toString() + ": " + attribute.getValue());
-    				}
-    				System.out.println();
+    			if (startElement.asStartElement().getName().toString().endsWith("message")) {
+    				event = eventReader.nextEvent();
+    				System.out.println("\n" + event.asCharacters().getData());
     			}
     		}
-    		else if (event.isEndElement()) {
-    			EndElement endElement = event.asEndElement();
-    			if (endElement.getName().getLocalPart().equals("children"))
-    				break;
-    		}
     	}
-    }
-    
+    }    
     
     /**
      * prints string XML response to given file
@@ -210,8 +220,8 @@ public class GetRelationInfo {
      */
 	private static void printXMLResponseToFile(String fileName, String response)
 	{
-		if (!fileName.contains(".xml") && !fileName.contains(".XML"))
-			fileName = fileName.concat(".xml");
+		if (!fileName.contains(".xml") || !fileName.contains(".XML"))
+			fileName.concat(".xml");
 	    File f = new File(fileName);
 		if(f.exists()) {
 			f.delete();
@@ -226,30 +236,27 @@ public class GetRelationInfo {
 			e.printStackTrace();
 		}
 		System.out.println("Done. output written to " + fileName);
-	}
-	
-	/**
+	}        
+    
+    
+    /**
 	 * @param args
-	 * @throws XMLStreamException 
-	 * @throws UnsupportedEncodingException 
+     * @throws XMLStreamException 
+     * @throws UnsupportedEncodingException 
 	 */
-	public static void main(String[] args) throws UnsupportedEncodingException, XMLStreamException {
+	public static void main(String[] args)  throws UnsupportedEncodingException, XMLStreamException, ClientHandlerException, UniformInterfaceException, InterruptedException  {
         if (args.length < 1) {
         	usage();
         }
 
         //user input arguments
-	    String relations;
-	    String attributes = null;
+	    String xmlFileInput;
 	    String fileName = null;
+	    String parser = "DefaultParser";
         
-	    relations = args[0];
+	    xmlFileInput = args[0];
 	    for (int i = 1; i < args.length; i++) {
-	    	if (args[i].equals("-attr")) {
-	    		i++;
-	    		attributes = args[i];
-	    	}
-	    	else if (args[i].equals("-out")) {
+	    	if (args[i].equals("-out")) {
 	    		i++;
 	    		fileName = args[i];
 	    	}
@@ -265,19 +272,23 @@ public class GetRelationInfo {
 	    		i++;
 	    		BASE_URL = args[i];
 	    	}
-	    	
+	    	else if (args[i].equals("-parser")) {
+	    		i++;
+	    		parser = args[i];
+	    	}
 	    }
 	    
-		GetRelationInfo c = new GetRelationInfo();
+	    UploadData c = new UploadData();
 	    String response = null;
 
-	    response = c.sendRequestAndGetServerResponse(relations, attributes);
+	    response = c.sendRequestAndGetServerResponse(new File(xmlFileInput), parser);
 	    
 	    if (fileName != null)
 	    	//XML output file specified.
 	    	printXMLResponseToFile(fileName, response);
 	    else
 	    	//Parse and display on console
-		    parseMetadataXMLResponseAndDisplayOnConsole(response);
+		    parseLoadDataXMLResponseAndDisplayOnConsole(response);
 	}
+	    
 }

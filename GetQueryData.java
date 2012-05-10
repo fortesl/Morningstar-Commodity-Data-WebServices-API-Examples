@@ -122,44 +122,38 @@ public class GetQueryData {
      */
     String sendRequestAndGetServerResponse(String queryText) throws UnsupportedEncodingException, ClientHandlerException, UniformInterfaceException, XMLStreamException, InterruptedException
     {
-    	ClientResponse resp = null;
-    	String response = null;
+    	ClientResponse response = null;
+    	String responseString = null;
 
     	// Prepare the request pay-load with the given query.
-		String query = "<DataRequest>" + 
-				"<Query>"+ 
-				"<Text>" + 
-				queryText + 
-				"</Text>"+ 
-				"</Query>"+ 
-				"</DataRequest>";
+		String queryPayload = "<DataRequest><Query><Text>" + queryText + "</Text></Query></DataRequest>";
 
         // Issue the POST HTTP request specifying URL path and media type. The pay-load is conveyed by the query.
-        resp = webRsc.path(DATA_REQ_RSC_PATH).
+        response = webRsc.path(DATA_REQ_RSC_PATH).
         		accept(MediaType.TEXT_XML).type(MediaType.TEXT_XML).
-        		post(ClientResponse.class, query);
+        		post(ClientResponse.class, queryPayload);
         
-        response = resp.getEntity(String.class);
         // Check the HTTP response status.
-        if (HTTP_CODE_OK != resp.getStatus()) {
+        if (HTTP_CODE_OK != response.getStatus()) {
             // Present the error when something went wrong and bail out.
-            throw new IllegalStateException("Initial request failed with response [" + resp + "]");
+            throw new IllegalStateException("Initial request failed with response [" + response + "]");
         }
         
+        responseString = response.getEntity(String.class);
         
         //Also check the response status attribute of the returned XML
         //200 is still processing.
-        while (getDataRequestResponseStatus(response) == 200) {
+        while (getDataRequestResponseStatus(responseString) == 200) {
             // When the status indicates waiting-on-result, retry the request with ID.
             Thread.sleep(250);
-            resp = webRsc.path(DATA_REQ_RSC_PATH + "/" + jobID).get(ClientResponse.class);
-            if (HTTP_CODE_OK != resp.getStatus()) {
-                throw new IllegalStateException("Error while polling for results [" + resp + "]");
+            response = webRsc.path(DATA_REQ_RSC_PATH + "/" + jobID).get(ClientResponse.class);
+            if (HTTP_CODE_OK != response.getStatus()) {
+                throw new IllegalStateException("Error while polling for results [" + response + "]");
             }
-            response = resp.getEntity(String.class);
+            responseString = response.getEntity(String.class);
         }
         
-        return response;        
+        return responseString;        
 	}
 
 	@SuppressWarnings("unchecked")
@@ -196,7 +190,7 @@ public class GetQueryData {
     }
     
     /**
-     * Parses Data XML response to console
+     * Parses Data XML response and return reports
      * @param response XML formated response
      * @throws UnsupportedEncodingException 
      * @throws XMLStreamException 
