@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Query Execution</title>
+<style type="text/css">
+  tr { height: 30px;}
+  table {border: 1px solid black;}
+</style>
+
+<script type="text/javascript">
+/*
+Copyright (c) 2012 Morningstar, inc. All rights reserved.
+
+ Redistribution and use of this software in source and binary forms, with or without modification,
+ are permitted provided that the following conditions are met:
+ * Redistributions of source code must retain the above copyright notice, this list of conditions
+ and the following disclaimer.
+ * Redistributions in binary form must reproduce the above copyright notice, this list of
+ conditions and the following disclaimer in the documentation and/or other materials provided
+ with the distribution.
+ * The name of Morningstar inc. may not be used to endorse or promote products derived from 
+ this software without specific prior written permission of Morningstar inc.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+var xmlhttp = null;
+var baseURI = "";
+var username = "";
+var password = "";
+var reportsString = "";
+var requestSentTime, responseReceivedTime;
+
+/* ============================
+	A sleep utility function
+	========================== */
+function sleep(milliseconds) {
+    var start = new Date().getTime();
+    for (var i = 0; i < 1e7; i++) {
+        if ((new Date().getTime() - start) > milliseconds) {
+            break;
+        }
+    }
+}
+
+/* ================================================
+	Initializes XMLHttpRequest object on page load
+	=============================================== */
+function init() {
+    // put more code here in case you are concerned about browsers that do not provide XMLHttpRequest object directly
+    try{
+        xmlhttp = new XMLHttpRequest();
+    }catch(error){
+        alert("failed to create http request handler! " + error.message);
+    }
+}
+
+/* ==============================================================
+	Callback function gets called to handle server post response
+	============================================================= */
+var handleDataResponse = function ()
+{
+    if (xmlhttp.readyState == 4) {
+        //server response is complete
+        if ( xmlhttp.status == 200) {
+        	// HTTP response is OK
+            xmlDoc = xmlhttp.responseXML;
+            DataRequestResponse = xmlDoc.getElementsByTagName("DataRequestResponse")[0];
+            var responseStatus = DataRequestResponse.attributes.getNamedItem("status").value;
+            if ("200" == responseStatus) {
+            	//Webserver still processing request, loop until job is complete
+                sleep(1500);
+                jobId = DataRequestResponse.attributes.getNamedItem("id").value;
+                url = baseURI + "rs/api/datarequests/" + jobId;
+                xmlhttp.onreadystatechange = handleDataResponse;//recursive call.
+                try {
+                    xmlhttp.open('GET', url, true, username, password);
+                    xmlhttp.send();
+                }catch(error) {
+                    alert(error.message);
+                }
+            }
+            
+            //record response time
+            var d = new Date();
+            responseReceivedTime = d.getTime();
+
+            //print the server XML response
+            printReport(xmlDoc);
+        } else {
+        	// HTTP error
+            alert("Error(" + xmlhttp.status + ") -> " + xmlhttp.statusText);
+            document.getElementById("version").innerHTML = "Post request failed!";
+            document.getElementById("response").innerHTML = "";
+        }
+    }
+}
+
+/* =================================================
+	HTTP GET server version from user baseUri input
+	================================================ */
+function sendVersionGetRequest(baseUri)
+{
+    if (baseUri.length == 0) return;
+
+    lastCharacter = baseUri.charAt(baseUri.length -1);
+    if (lastCharacter == "/")
+    	url = baseUri + "rs/version";
+    else
+    	url = baseUri + "/rs/version";
+    try {
+        xmlhttp.open('GET', url, false);
+        xmlhttp.send();     
+    }catch(error) {
+        alert(error.message);
+    }
+    if (xmlhttp.status == 200) {
+        xmlDoc = xmlhttp.responseXML;
+        x=xmlDoc.getElementsByTagName('Version');
+        document.getElementById("version").innerHTML = "WebService Version: " + x.item(0).attributes[0].value;      
+    } else
+        document.getElementById("version").innerHTML = "WebService not accessible at Base URI";     
+}
+
+/* ==================================================
+	HTTP POST user request for query data
+	================================================= */
+function sendDataPostRequest(baseUri, responseHandler)
+{
+    
+    if (baseUri.length == 0) return;
+
+    lastCharacter = baseUri.charAt(baseUri.length -1);
+    if (lastCharacter == "/")
+    	baseURI = baseUri;
+    else
+        baseURI = baseUri + "/";
+    
+    url = baseURI + "rs/api/datarequests";
+    if (document.getElementById("query"))
+        requestPayload = "<DataRequest><Query><Text>" + document.getElementById("query").value + "</Text></Query></DataRequest>";
+
+    xmlhttp.onreadystatechange = responseHandler;
+    
+    document.getElementById("response").innerHTML = "Posting request. Please wait ...";
+    document.getElementById("response").style.textDecoration="underline overline blink";
+    username = document.getElementById("username").value;
+    password = document.getElementById("password").value;
+    
+    //record request time
+    var d = new Date();
+    requestSentTime = d.getTime();
+    
+    //post data request
+    try {
+        xmlhttp.open('POST',url,true, username, password);
+        xmlhttp.setRequestHeader("Content-type","text/xml");
+        xmlhttp.send(requestPayload);   
+    }catch(error) {
+        document.getElementById("response").innerHTML = "";
+        alert(error.message);
+    }
+}
+
+/* ===================================================================
+	Parse server xml response and display information as an HTML table
+	================================================================== */
+function printReport(xmlDoc)
+{
+	//DataRequestResponse object
+    DataRequestResponse = xmlDoc.getElementsByTagName("DataRequestResponse")[0];
+    var responseStatus = DataRequestResponse.attributes.getNamedItem("status").value;
+    
+    if (responseStatus != "100") {
+        responseMessage = DataRequestResponse.attributes.getNamedItem("statusMsg").value;
+        document.getElementById("response").innerHTML = responseMessage;
+        return;
+    }
+
+    reportsString = "";
+    document.getElementById("response").style.textDecoration="";
+
+    //Reports objects
+    Reports = xmlDoc.getElementsByTagName("Reports");
+    for (i=0; i< Reports.length; i++) {
+        reportsString = reportsString + "<p style='font-weight:900;'>" + Reports[i].attributes[0].value + "</p>";
+        //ReportBlocks objects
+        ReportBlocks = Reports[i].getElementsByTagName("ReportBlocks");
+        for (j=0; j< ReportBlocks.length; j++) {
+        	//RowDates objects
+            RowDates = ReportBlocks[j].getElementsByTagName("RowDates");
+        	//RowTimes objects
+            RowTimes = ReportBlocks[j].getElementsByTagName("RowTimes");
+        	//Values objects
+            Values = ReportBlocks[j].getElementsByTagName("Values");
+        	//ColumnHeadings objects
+            ColumnHeadings = ReportBlocks[j].getElementsByTagName("ColumnHeadings");        
+            numCols = ColumnHeadings.length;
+            reportsString = reportsString + "<table style='border: 1px solid black;'>";
+            reportsString = reportsString + "<tr style='height:20px;text-align:left;background-color:#A7C942;color:#ffffff;'>";
+            reportsString = reportsString + "<th style='padding:3px 7px 2px 7px;'>Date</th><th style='padding:3px 7px 2px 7px;'>Day</th>";
+            if (RowTimes.length > 0)
+                reportsString = reportsString + "</th><th style='padding:3px 7px 2px 7px;'>Time</th>";
+            for (c=0; c< numCols; c++) {
+                reportsString = reportsString + "<th style='padding:3px 7px 2px 7px;'>" + ColumnHeadings[c].childNodes[0].nodeValue + "</th>";
+            }   
+            reportsString = reportsString + "</tr>";
+            //print dates & values
+            for (d = 0; d < RowDates.length; d++) {
+                reportsString = reportsString + getDateStrings(RowDates[d].childNodes[0].nodeValue, d);
+                if (RowTimes.length > 0)
+                    reportsString = reportsString + "<td style='padding:3px 7px 2px 7px;'>" + RowTimes[d].childNodes[0].nodeValue + "</td>";
+                for (c = 0; c<numCols; c++) {
+                    value_str = "NaN";
+                    v = numCols * d + c;
+                    if (!isNaN(Values[v].childNodes[0].nodeValue))
+                        value_str = Values[v].childNodes[0].nodeValue;
+                    reportsString = reportsString + "<td style='padding:3px 7px 2px 7px;'>" + value_str + "</td>";
+                }
+                reportsString = reportsString + "</tr>";
+            }
+            reportsString = reportsString + "<tr><th>" + d + " Occurrences.</th></tr>";
+            
+            //SummaryReport objects
+            SummaryReport = ReportBlocks[j].getElementsByTagName("SummaryReport");
+            //SummaryReportAttributes objects
+            SummaryReportAttributes = ReportBlocks[j].getElementsByTagName("SummaryReport")[0].attributes;
+            reportsString = reportsString + "<tfoot style='color:blue'>";
+            for (at = 0; at < SummaryReportAttributes.length; at++) {
+                reportsString = reportsString + "<tr style='height:30px;'><td></td>";
+                if (RowTimes.length > 0)
+                    reportsString = reportsString + "<td></td>";
+                reportsString = reportsString + "<td style='padding:3px 7px 2px 7px;'>" + SummaryReportAttributes[at].name + ":</td>";
+                for (c = 0; c < numCols; c++)
+                    reportsString = reportsString + "<td style='padding:3px 7px 2px 7px;'>" + SummaryReport[c].attributes[at].value + "</td>";
+                reportsString = reportsString + "</tr>";
+            } 
+            reportsString = reportsString + "</tfoot>"; 
+            //////
+            
+            reportsString = reportsString + "</table>";
+        } 
+    }
+    
+    var serverResponseTimeElapsed = responseReceivedTime - requestSentTime;
+    reportsString = reportsString + "<p>Server Response time: " +  serverResponseTimeElapsed + " milliseconds<p>";
+
+    document.getElementById("response").innerHTML = reportsString;
+}
+
+/* ==============================================
+	Parse RowDate into date & day of week strings
+	============================================= */
+function getDateStrings(rowDate, rowNumber)
+{
+    year = rowDate.slice(0,4);
+    month = rowDate.slice(5,7);
+    day = rowDate.slice(8,10);
+    date_str = month + "/" + day  + "/" + year;
+    
+    var daysOfTheWeek = new Array(7);
+    daysOfTheWeek[0] = "Sun"; 
+    daysOfTheWeek[1] = "Mon";
+    daysOfTheWeek[2] = "Tue"; 
+    daysOfTheWeek[3] = "Wed";
+    daysOfTheWeek[4] = "Thu"; 
+    daysOfTheWeek[5] = "Fri";
+    daysOfTheWeek[6] = "Sat"; 
+    
+    var myDate = new Date(year, month -1, day);
+    
+    week = daysOfTheWeek[myDate.getDay()];
+    if (rowNumber % 2)
+        return "<tr style='height:20px;color:#000000;background-color:#EAF2D3;'><td style='padding:3px 7px 2px 7px;'>" + date_str + "</td><td>" + week + "</td>";
+    else
+        return "<tr style='height:20px;'><td style='padding:3px 7px 2px 7px;'>" + date_str + "</td><td>" + week + "</td>";
+}
+
+</script>
+
+</head>
+<body onload="init()">
+
+<div id="request" style="margin-left:10px;">
+<h2 style="text-align:center;margin-bottom:30px">Commodity DataServer<br/>WebServices Query Execution</h2>
+Request
+<form>
+<table>
+<tr>
+<th style="text-align:left;margin-left:15px;"><label for="baseUri">Base URI:</label> <input id="baseUri" type="text" placeholder="https://ws.lim.com/" 
+checked="checked" required="required" onchange="sendVersionGetRequest(form.baseUri.value); return false;"/>
+ <label id="version" style="color:red;margin-left:25px;font-size:12px;">WebService Version</label></th>
+</tr>
+<tr>
+<th><label for="username">Username:</label> <input id="username" type="text" required="required" /> 
+<label for="password">Password:</label> <input id="password" type="password" required=required /></th>
+</tr>
+<tr>
+<th><label for="query">Query:</label><br/><textarea rows="6" cols="70" wrap="hard"
+style="margin-left:15px;margin-right:15px;" id="query" required="required"
+ placeholder="Enter a valid Commodity DataServer Query." oninput="document.getElementById('response').innerHTML = 'Response'">
+</textarea></th>
+</tr>
+<tr>
+<th><input type="button" value="POST" id="post" onclick="sendDataPostRequest(form.baseUri.value, handleDataResponse); return false;"/></th>
+</tr>
+</table>
+</form>
+</div>
+
+<div id="response" style="test-align:center;margin-top:20px;margin-left:50px;">
+
+</div>
+<div id="extraInfo" style="text-align:center;margin-top:50px;font-size:12px;">
+ The JavaScript in this file is subject to the browser's <a href='http://en.wikipedia.org/wiki/Same_origin_policy' target='out'>same origin policy</a> and should be served 
+ from the Commodity DataServer host.<br/>
+ Microsoft's Internet Explorer is the only browser which can be configured to allow this file to be run directly from the local computer file system.
+</div>
+
+</body>
+</html>
+
