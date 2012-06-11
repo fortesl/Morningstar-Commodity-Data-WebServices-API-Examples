@@ -1,6 +1,7 @@
 <!DOCTYPE html>
-<html>
+<html lang="en-US">
 <head>
+<meta http-equiv="Content-Type" content="text/html" charset="utf-8">
 <title>Query Execution</title>
 <style type="text/css">
   tr { height: 30px;}
@@ -59,6 +60,9 @@ function init() {
     }catch(error){
         alert("failed to create http request handler! " + error.message);
     }
+    baseURI = location.protocol + "//" + location.host;
+    document.getElementById('baseUri').defaultValue = baseURI;
+    sendVersionGetRequest(baseURI);
 }
 
 /* ==============================================================
@@ -125,7 +129,7 @@ function sendVersionGetRequest(baseUri)
         x=xmlDoc.getElementsByTagName('Version');
         document.getElementById("version").innerHTML = "WebService Version: " + x.item(0).attributes[0].value;      
     } else
-        document.getElementById("version").innerHTML = "WebService not accessible at Base URI";     
+        document.getElementById("version").innerHTML = "WebServices not accessible at " + baseUri;     
 }
 
 /* ==================================================
@@ -134,7 +138,13 @@ function sendVersionGetRequest(baseUri)
 function sendDataPostRequest(baseUri, responseHandler)
 {
     
-    if (baseUri.length == 0) return;
+    if (baseUri.length == 0) {
+    	baseUri = baseURI;
+        if (baseUri.length == 0) {
+    		alert("Please enter a Base URI. Example: https:ws.lim.com/");
+    		return;
+        }
+    }
 
     lastCharacter = baseUri.charAt(baseUri.length -1);
     if (lastCharacter == "/")
@@ -293,18 +303,18 @@ Request
 <form>
 <table>
 <tr>
-<th style="text-align:left;margin-left:15px;"><label for="baseUri">Base URI:</label> <input id="baseUri" type="text" placeholder="https://ws.lim.com/" 
+<th style="text-align:left;margin-left:15px;"><label for="baseUri">Base URI:</label> <input id="baseUri" type="text" 
 checked="checked" required="required" onchange="sendVersionGetRequest(form.baseUri.value); return false;"/>
  <label id="version" style="color:red;margin-left:25px;font-size:12px;">WebService Version</label></th>
 </tr>
 <tr>
-<th><label for="username">Username:</label> <input id="username" type="text" required="required" /> 
+<th><label for="username">Username:</label> <input id="username" type="text" required="required" autofocus="autofocus"/> 
 <label for="password">Password:</label> <input id="password" type="password" required=required /></th>
 </tr>
 <tr>
 <th><label for="query">Query:</label><br/><textarea rows="6" cols="70" wrap="hard"
 style="margin-left:15px;margin-right:15px;" id="query" required="required"
- placeholder="Enter a valid Commodity DataServer Query." oninput="document.getElementById('response').innerHTML = 'Response'">
+ placeholder="Enter a valid Commodity DataServer Query." oninput="document.getElementById('response').innerHTML = 'Response Will display here...'">
 </textarea></th>
 </tr>
 <tr>
@@ -314,15 +324,14 @@ style="margin-left:15px;margin-right:15px;" id="query" required="required"
 </form>
 </div>
 
-<div id="response" style="test-align:center;margin-top:20px;margin-left:50px;">
+<div id="response" style="text-align:center;margin-top:20px;margin-left:50px;">
 
 </div>
 <div id="extraInfo" style="text-align:center;margin-top:50px;font-size:12px;">
- The JavaScript in this file is subject to the browser's <a href='http://en.wikipedia.org/wiki/Same_origin_policy' target='out'>same origin policy</a> and should be served 
- from the Commodity DataServer host.<br/>
- Microsoft's Internet Explorer is the only browser which can be configured to allow this file to be run directly from the local computer file system.
+ The JavaScript in this file is subject to the browser's <a href='http://en.wikipedia.org/wiki/Same_origin_policy' 
+ 	target='out'>same origin policy</a>. It can be served from the DataServer <br/>host machine, or served from anywhere to access a
+ 	DataServer with <a href='http://enable-cors.org/' target='out2'>Cross Domain Resource Sharing</a> enabled. 
 </div>
-
 </body>
 </html>
 
